@@ -129,7 +129,7 @@ if not st.session_state.authenticated:
         if st.button("Entra"):
             if APP_PASSWORD and pwd == APP_PASSWORD:
                 st.session_state.authenticated = True
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Password errata.")
     st.stop()
