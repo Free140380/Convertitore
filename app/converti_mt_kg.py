@@ -7,13 +7,14 @@ Sorgente: "PESO SPECIFICO + EXTRA COMPLETO.ods"
 - Login con password (APP_PASSWORD in Secrets)
 - Ricerca ODS: upload dalla sidebar oppure auto in ./data/ o ./
 - Schede supportate: Barra Tonda, Barra Esagonale, Barra Quadra, Barra Tondo forata
-- Diametro (e Foro per il forato) a tendina
+- Diametro (e Foro per il forato) a tendina (solo valori reali, niente NaN)
 - Kg e Metri si aggiornano automaticamente (last_changed)
 - Slider decimali separati per Kg e Metri (0..3; default 0)
 """
 
 from typing import Dict, Tuple, Optional
 from pathlib import Path
+import math
 import pandas as pd
 import streamlit as st
 
@@ -42,7 +43,7 @@ if not st.session_state.authenticated:
 
 # ------------------------- Utility -------------------------
 def to_float(x) -> Optional[float]:
-    """Converte stringhe con virgola, spazi, ecc. in float; ritorna None se non numerico."""
+    """Converte stringhe con virgola/spazi in float; ritorna None se non numerico."""
     if x is None:
         return None
     if isinstance(x, (int, float)):
@@ -56,6 +57,16 @@ def to_float(x) -> Optional[float]:
     except Exception:
         return None
 
+def is_number(x) -> bool:
+    """True se x è un numero reale (non None e non NaN)."""
+    if x is None:
+        return False
+    try:
+        xf = float(x)
+        return not math.isnan(xf)
+    except Exception:
+        return False
+
 def norm(s: str) -> str:
     return (s or "").strip().lower()
 
@@ -66,7 +77,6 @@ def find_sheet_name(all_sheets, keywords):
         for kw in keywords:
             if kw in n:
                 return name
-    # fallback: match su token singoli
     for name, n in normed.items():
         for kw in keywords:
             if any(tok in n for tok in kw.split()):
@@ -75,27 +85,26 @@ def find_sheet_name(all_sheets, keywords):
 
 @st.cache_data(show_spinner=False)
 def read_ods_all_sheets(path: str) -> Dict[str, pd.DataFrame]:
-    # header=None per leggere tabelle “raw” (A=0, B=1, …)
     return pd.read_excel(path, sheet_name=None, engine="odf", header=None)
 
 def build_lookup_normale(df: pd.DataFrame) -> Dict[float, float]:
-    """Legge col A (misura) e D (kg/m)."""
+    """Legge col A (misura) e D (kg/m) scartando None/NaN."""
     out = {}
     for _, row in df.iterrows():
         misura = to_float(row.iloc[0])
-        kg_m = to_float(row.iloc[3])
-        if misura is not None and kg_m is not None:
+        kg_m   = to_float(row.iloc[3])
+        if is_number(misura) and is_number(kg_m):
             out[float(misura)] = float(kg_m)
     return out
 
 def build_lookup_forata(df: pd.DataFrame) -> Dict[Tuple[float, float], float]:
-    """Legge col A (diametro), B (foro), E (kg/m)."""
+    """Legge col A (diametro), B (foro), E (kg/m) scartando None/NaN."""
     out = {}
     for _, row in df.iterrows():
         diam = to_float(row.iloc[0])
         foro = to_float(row.iloc[1])
         kg_m = to_float(row.iloc[4])
-        if None not in (diam, foro, kg_m):
+        if is_number(diam) and is_number(foro) and is_number(kg_m):
             out[(float(diam), float(foro))] = float(kg_m)
     return out
 
@@ -169,15 +178,17 @@ key = {"Tonda": "tonda", "Esagonale": "esagonale", "Quadra": "quadra", "Tondo fo
 kg_per_m = None
 if key == "tondo_forata":
     if maps["tondo_forata"]:
-        diametri = sorted({d for (d, _) in maps["tondo_forata"].keys()})
+        # Solo valori reali (niente NaN), unici e ordinati
+        diametri = sorted({d for (d, _) in maps["tondo_forata"].keys() if is_number(d)})
         d_sel = st.selectbox("Diametro", options=diametri, index=0)
-        fori = sorted({f for (d, f) in maps["tondo_forata"].keys() if abs(d - float(d_sel)) < 1e-9})
+        fori = sorted({f for (d, f) in maps["tondo_forata"].keys()
+                       if is_number(f) and abs(d - float(d_sel)) < 1e-9})
         f_sel = st.selectbox("Foro", options=fori, index=0)
         kg_per_m = maps["tondo_forata"].get((float(d_sel), float(f_sel)))
     else:
         st.warning("Nessun dato disponibile per Tondo forato nel file.")
 else:
-    misure = sorted(maps[key].keys())
+    misure = sorted([m for m in maps[key].keys() if is_number(m)])
     if misure:
         d_sel = st.selectbox("Diametro", options=misure, index=0)
         kg_per_m = maps[key].get(float(d_sel))
@@ -203,13 +214,13 @@ with st.sidebar:
 if "mt_val" not in st.session_state: st.session_state.mt_val = 0.0
 if "kg_val" not in st.session_state: st.session_state.kg_val = 0.0
 if "last_changed" not in st.session_state: st.session_state.last_changed = None
-if st.session_state.get("do_reset"):  # reset sicuro pre-widget
+if st.session_state.get("do_reset"):
     st.session_state.mt_val = 0.0
     st.session_state.kg_val = 0.0
     st.session_state.last_changed = None
     st.session_state.do_reset = False
 
-# Calcolo PRIMA di creare i widget (evita StreamlitAPIException)
+# Calcolo PRIMA dei widget
 if kg_per_m and kg_per_m > 0:
     if st.session_state.last_changed == "mt":
         st.session_state.kg_val = kg_da_mt(kg_per_m, st.session_state.mt_val)
