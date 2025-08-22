@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+
+# Streamlit
+.streamlit/
+
+# Editor/OS
+.vscode/
+.DS_Store
+
+# Dati locali (tieni fuori gli .ods)
+data/*.ods
